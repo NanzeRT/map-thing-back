@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 
-use crate::AppState;
+use crate::{AppState, users::User};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Route {
@@ -17,32 +17,67 @@ pub struct Route {
     pub stars: i32,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RouteWithAuthor {
+    pub id: i32,
+    pub name: String,
+    pub description: Option<String>,
+    pub author: User,
+    pub stars: i32,
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(get_routes).post(add_route))
         .route("/:id", get(get_routes_id))
 }
 
-pub async fn get_routes(State(app_state): State<Arc<AppState>>) -> Json<Vec<Route>> {
-    sqlx::query_as!(Route, r#"SELECT * FROM routes"#,)
+pub async fn get_routes(State(app_state): State<Arc<AppState>>) -> Json<Vec<RouteWithAuthor>> {
+    let routes = sqlx::query_as!(Route, r#"SELECT * FROM routes"#,)
         .fetch_all(&app_state.db)
         .await
-        .unwrap()
-        .into()
+        .unwrap();
+
+    let mut routes_with_author = Vec::new();
+
+    for route in routes {
+        let author = sqlx::query_as!(User, r#"SELECT * FROM users WHERE id = $1"#, route.author_id)
+            .fetch_one(&app_state.db)
+            .await
+            .unwrap();
+
+        routes_with_author.push(RouteWithAuthor {
+            id: route.id,
+            name: route.name,
+            description: route.description,
+            author,
+            stars: route.stars,
+        });
+    }
+
+    routes_with_author.into()
+
 }
 
 pub async fn get_routes_id(
     State(app_state): State<Arc<AppState>>,
     Path(id): Path<i32>,
-) -> Result<Json<Route>, ()> {
+) -> Result<Json<RouteWithAuthor>, ()> {
     let route = sqlx::query_as!(Route, r#"SELECT * FROM routes WHERE id = $1"#, id)
         .fetch_one(&app_state.db)
-        .await;
+        .await.map_err(|_| ())?;
 
-    match route {
-        Ok(route) => Ok(route.into()),
-        Err(_) => Err(()),
-    }
+    let author = sqlx::query_as!(User, r#"SELECT * FROM users WHERE id = $1"#, route.author_id)
+        .fetch_one(&app_state.db)
+        .await.map_err(|_| ())?;
+
+    Ok(RouteWithAuthor {
+        id: route.id,
+        name: route.name,
+        description: route.description,
+        author,
+        stars: route.stars,
+    }.into())
 }
 
 pub async fn add_route(
