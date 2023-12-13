@@ -1,4 +1,4 @@
 create table users (
     id serial primary key,
-    name text not null
+    name varchar(255) not null
 );
